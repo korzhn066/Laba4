@@ -1,4 +1,8 @@
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseListener;
+import java.awt.event.MouseMotionListener;
 import java.awt.font.FontRenderContext;
 import java.awt.geom.*;
 import java.util.Vector;
@@ -7,16 +11,25 @@ import javax.swing.JPanel;
 @SuppressWarnings("serial")
 
 public class GraphicsDisplay extends JPanel {
-    // Список координат точек для построения графика
-    private Double[][] graphicsData;
+    public Vector<Double[][]> data = new Vector<Double[][]>();
+    private Vector<Double[][]> realDataCoordinates = new Vector<Double[][]>();
 
-    private Vector<Double[][]> data = new Vector<Double[][]>();
-    // Флаговые переменные, задающие правила отображения графика
+    private float zoomX = 1;
+    private float zoomY = 1;
+    private float translateX = 0;
+    private float translateY = 0;
+
     private boolean showAxis = true;
+    private boolean isStartZoom = false;
     private boolean showMarkers = true;
     private boolean rotate = false;
     private int rotation = 0;
-    // Границы диапазона пространства, подлежащего отображению
+
+    private boolean isLabel = false;
+    private String label;
+    private float labelX;
+    private float labelY;
+
     private double minX;
     private double maxX;
     private double minY;
@@ -27,40 +40,42 @@ public class GraphicsDisplay extends JPanel {
     private BasicStroke graphicsStroke;
     private BasicStroke axisStroke;
     private BasicStroke markerStroke;
+
+    private BasicStroke rectStroke;
+    private boolean isStartDrag = false;
+    private float rectXStart;
+    private float rectYStart;
+    private float rectWidth;
+    private float rectHeight;
     // Различные шрифты отображения надписей
     private Font axisFont;
 
     public GraphicsDisplay() {
-// Цвет заднего фона области отображения - белый
         setBackground(Color.WHITE);
-// Сконструировать необходимые объекты, используемые в рисовании
-// Перо для рисования графика
-        graphicsStroke = new BasicStroke(2.0f, BasicStroke.CAP_BUTT,
-                BasicStroke.JOIN_ROUND, 10.0f,
-                new float[]{10, 5, 10, 5, 10, 5,
-                        3, 2, 3, 2, 3, 2}, 10.0f);
+        graphicsStroke = new BasicStroke(2.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10.0f,
+                new float[]{10, 5, 10, 5, 10, 5, 3, 2, 3, 2, 3, 2}, 10.0f);
 
-// Перо для рисования осей координат
+        rectStroke = new BasicStroke(2.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND, 10.0f,
+                new float[]{10, 10}, 0.0f);
+
         axisStroke = new BasicStroke(2.0f, BasicStroke.CAP_BUTT,
                 BasicStroke.JOIN_MITER, 10.0f, null, 0.0f);
-// Перо для рисования контуров маркеров
+
         markerStroke = new BasicStroke(1.0f, BasicStroke.CAP_BUTT,
                 BasicStroke.JOIN_MITER, 10.0f, null, 0.0f);
-// Шрифт для подписей осей координат
+
         axisFont = new Font("Serif", Font.BOLD, 36);
+
+        this.addMouseListener(new MouseHandler());
+        this.addMouseMotionListener(new MouseMotionHandler());
     }
 
-    // Данный метод вызывается из обработчика элемента меню "Открыть файл с графиком"
-    // главного окна приложения в случае успешной загрузки данных
     public void showGraphics(Double[][] graphicsData) {
-// Сохранить массив точек во внутреннем поле класса
         this.data.add(graphicsData);
-// Запросить перерисовку компонента, т.е. неявно вызватьpaintComponent()
+        this.realDataCoordinates.add(graphicsData);
         repaint();
     }
 
-    // Методы-модификаторы для изменения параметров отображения графика
-// Изменение любого параметра приводит к перерисовке области
     public void setShowAxis(boolean showAxis) {
         this.showAxis = showAxis;
         repaint();
@@ -77,18 +92,11 @@ public class GraphicsDisplay extends JPanel {
         repaint();
     }
 
-    // Метод отображения всего компонента, содержащего график
     public void paintComponent(Graphics g) {
-        /* Шаг 1 - Вызвать метод предка для заливки области цветом заднего фона
-         * Эта функциональность - единственное, что осталось в наследство от
-         * paintComponent класса JPanel
-         */
+
         super.paintComponent(g);
-// Шаг 2 - Если данные графика не загружены (при показе компонентапри запуске программы) - ничего не делать
         if (data == null || data.size() == 0) return;
-// Шаг 3 - Определить минимальное и максимальное значения длякоординат X и Y
-// Это необходимо для определения области пространства, подлежащейотображению
-// Еѐ верхний левый угол это (minX, maxY) - правый нижний это(maxX, minY)
+
         minX = data.get(0)[0][0];
         maxX = data.get(0)[data.get(0).length - 1][0];
         minY = data.get(0)[0][1];
@@ -101,7 +109,7 @@ public class GraphicsDisplay extends JPanel {
             if (maxX < data.get(i)[data.get(0).length - 1][0])
                 minX = data.get(i)[data.get(0).length - 1][0];
         }
-// Найти минимальное и максимальное значение функции
+
         for (int j = 0; j < data.size(); j++) {
             for (int i = 1; i < data.get(j).length; i++) {
                 if (data.get(j)[i][1] < minY) {
@@ -113,89 +121,78 @@ public class GraphicsDisplay extends JPanel {
             }
         }
 
-/* Шаг 4 - Определить (исходя из размеров окна) масштабы по осям X
-и Y - сколько пикселов
-* приходится на единицу длины по X и по Y
-*/
         double scaleX = getSize().getWidth() / (maxX - minX);
         double scaleY = getSize().getHeight() / (maxY - minY);
-// Шаг 5 - Чтобы изображение было неискажѐнным - масштаб долженбыть одинаков
-// Выбираем за основу минимальный
+
         scale = Math.min(scaleX, scaleY);
-// Шаг 6 - корректировка границ отображаемой области согласновыбранному масштабу
         if (scale == scaleX) {
-/* Если за основу был взят масштаб по оси X, значит по оси Y
-делений меньше,
-* т.е. подлежащий визуализации диапазон по Y будет меньше
-высоты окна.
-* Значит необходимо добавить делений, сделаем это так:
-* 1) Вычислим, сколько делений влезет по Y при выбранном
-масштабе - getSize().getHeight()/scale
-* 2) Вычтем из этого сколько делений требовалось изначально
-* 3) Набросим по половине недостающего расстояния на maxY и
-minY
-*/
             double yIncrement = (getSize().getHeight() / scale - (maxY -
                     minY)) / 2;
             maxY += yIncrement;
             minY -= yIncrement;
         }
         if (scale == scaleY) {
-// Если за основу был взят масштаб по оси Y, действовать поаналогии
             double xIncrement = (getSize().getWidth() / scale - (maxX -
                     minX)) / 2;
             maxX += xIncrement;
             minX -= xIncrement;
         }
-// Шаг 7 - Сохранить текущие настройки холста
+
         Graphics2D canvas = (Graphics2D) g;
         Stroke oldStroke = canvas.getStroke();
         Color oldColor = canvas.getColor();
         Paint oldPaint = canvas.getPaint();
         Font oldFont = canvas.getFont();
-// Шаг 8 - В нужном порядке вызвать методы отображения элементовграфика
-// Порядок вызова методов имеет значение, т.к. предыдущий рисунокбудет затираться последующим
-// Первыми (если нужно) отрисовываются оси координат.
+
+
+        if (isStartZoom) zoomToRegion(canvas);
         if (rotate) {
             rotation += 90;
-            canvas.rotate(Math.toRadians(rotation), getWidth()/2, getHeight()/2);
+            canvas.rotate(Math.toRadians(rotation), (float)getWidth()/2, (float)getHeight()/2);
             rotate = false;
         }
 
+        if (showAxis)
+            paintAxis(canvas);
 
-        if (showAxis) paintAxis(canvas);
-// Затем отображается сам график
         paintGraphics(canvas);
-// Затем (если нужно) отображаются маркеры точек, по которымстроился график.
+
         if (showMarkers) paintMarkers(canvas);
+        if (isLabel) paintLabel(canvas);
+
+        paintRect(canvas);
 
 
-// Шаг 9 - Восстановить старые настройки холста
         canvas.setFont(oldFont);
         canvas.setPaint(oldPaint);
         canvas.setColor(oldColor);
         canvas.setStroke(oldStroke);
-
-
     }
 
-    // Отрисовка графика по прочитанным координатам
+    protected void paintRect(Graphics2D canvas){
+        canvas.setColor(Color.BLACK);
+        canvas.setStroke(rectStroke);
+        canvas.draw(new Rectangle2D.Float(rectXStart, rectYStart, rectWidth, rectHeight));
+    }
+
     protected void paintGraphics(Graphics2D canvas) {
-// Выбрать линию для рисования граф
-/* Будем рисовать линию графика как путь, состоящий из множества
-сегментов (GeneralPath)
-* Начало пути устанавливается в первую точку графика, после чего
-прямой соединяется со
-* следующими точками
-*/
-
-
-
         for (int j = 0; j < data.size(); j++) {
             PrintGraphic(canvas, j);
         }
+    }
 
-// Отобразить график
+    public void zoomToRegion(Graphics2D canvas) {
+        if (zoomX < 2){
+            zoomX += 1 - rectWidth / getWidth();
+            zoomY += 1 - rectHeight / getHeight();
+            translateX += 1 - rectWidth / getWidth();
+            translateY += 1 - rectHeight / getHeight();
+        }
+
+        canvas.scale(zoomX, zoomY);
+        //canvas.translate(-getWidth() * translateX, 0);
+        isStartZoom = false;
+
 
     }
 
@@ -229,14 +226,11 @@ minY
 
         GeneralPath graphics = new GeneralPath();
         for (int i = 0; i < data.get(j).length; i++) {
-// Преобразовать значения (x,y) в точку на экране point
             Point2D.Double point = xyToPoint(data.get(j)[i][0],
                     data.get(j)[i][1]);
             if (i > 0) {
-// Не первая итерация цикла - вести линию в точкуpoint
                 graphics.lineTo(point.getX(), point.getY());
             } else {
-// Первая итерация цикла - установить начало пути вточку point
                 graphics.moveTo(point.getX(), point.getY());
             }
         }
@@ -244,24 +238,17 @@ minY
         canvas.draw(graphics);
     }
 
-    // Отображение маркеров точек, по которым рисовался график
     protected void paintMarkers(Graphics2D canvas) {
-// Шаг 1 - Установить специальное перо для черчения контуровмаркеров
         canvas.setStroke(markerStroke);
-// Выбрать красный цвета для контуров маркеров
         canvas.setColor(Color.RED);
-// Выбрать красный цвет для закрашивания маркеров внутри
         canvas.setPaint(Color.RED);
-// Шаг 2 - Организовать цикл по всем точкам графика
+
         for (int j = 0; j < data.size(); j++) {
+            int i = 0;
+            var dataTemp = new Double[data.get(j).length][2];
+
             for (Double[] point : data.get(j)) {
-// Инициализировать эллипс как объект для представлениямаркера
                 Ellipse2D.Double marker = new Ellipse2D.Double();
-                //QuadCurve2D.Double marker = new QuadCurve2D.Double();
-/* Эллипс будет задаваться посредством указания координат
-его центра
-и угла прямоугольника, в который он вписан */
-// Центр - в точке (x,y)
 
                 int sumOfNumbers = 0;
                 int temp = (int) (double) point[1];
@@ -270,25 +257,31 @@ minY
                     temp /= 10;
                 }
 
-
                 if (sumOfNumbers < 10) {
                     canvas.setColor(Color.GREEN);
                 }
 
                 Point2D.Double center = xyToPoint(point[0], point[1]);
-// Угол прямоугольника - отстоит на расстоянии (3,3)
                 Point2D.Double corner = shiftPoint(center, 3, 3);
-// Задать эллипс по центру и диагонали
+
                 marker.setFrameFromCenter(center, corner);
-                canvas.draw(marker); // Начертить контур маркера
-                canvas.fill(marker); // Залить внутреннюю область маркера
+
+                dataTemp[i][0] = marker.x;
+                dataTemp[i][1] = marker.y;
+                i++;
+                canvas.draw(marker);
+                canvas.fill(marker);
             }
+
+            realDataCoordinates.set(j, dataTemp);
         }
-
-
     }
 
-    // Метод, обеспечивающий отображение осей координат
+    protected void paintLabel(Graphics2D canvas){
+        canvas.setColor(Color.BLUE);
+        canvas.drawString(label, labelX, labelY);
+    }
+
     protected void paintAxis(Graphics2D canvas) {
 // Установить особое начертание для осей
         canvas.setStroke(axisStroke);
@@ -361,31 +354,102 @@ minY
         }
     }
 
-    /* Метод-помощник, осуществляющий преобразование координат.
-    * Оно необходимо, т.к. верхнему левому углу холста с координатами
-    * (0.0, 0.0) соответствует точка графика с координатами (minX, maxY),
-    где
-    * minX - это самое "левое" значение X, а
-    * maxY - самое "верхнее" значение Y.
-    */
     protected Point2D.Double xyToPoint(double x, double y) {
-// Вычисляем смещение X от самой левой точки (minX)
         double deltaX = x - minX;
-// Вычисляем смещение Y от точки верхней точки (maxY)
         double deltaY = maxY - y;
         return new Point2D.Double(deltaX * scale, deltaY * scale);
     }
 
-    /* Метод-помощник, возвращающий экземпляр класса Point2D.Double
-     * смещѐнный по отношению к исходному на deltaX, deltaY
-     * К сожалению, стандартного метода, выполняющего такую задачу, нет.
-     */
-    protected Point2D.Double shiftPoint(Point2D.Double src, double deltaX,
-                                        double deltaY) {
-// Инициализировать новый экземпляр точки
+    protected double[] translatePointToXY(int x, int y) {
+        return new double[]{minX + (double)x / this.scale, maxY - (double)y / this.scale};
+    }
+
+    protected Point2D.Double shiftPoint(Point2D.Double src, double deltaX, double deltaY) {
         Point2D.Double dest = new Point2D.Double();
-// Задать еѐ координаты как координаты существующей точки +заданные смещения
         dest.setLocation(src.getX() + deltaX, src.getY() + deltaY);
         return dest;
     }
+
+    private boolean isMoveCoordinate = false;
+    private int labelI, labelJ;
+
+    public class MouseMotionHandler implements MouseMotionListener {
+        public MouseMotionHandler() {
+        }
+
+        public void mouseMoved(MouseEvent ev) {
+            boolean no = true;
+            for (int i = 0; i < realDataCoordinates.size(); i++) {
+                for (int j = 0; j < realDataCoordinates.get(i).length; j++) {
+                    if (ev.getX() >= realDataCoordinates.get(i)[j][0] - 6 && ev.getX() <= realDataCoordinates.get(i)[j][0] + 6 &&
+                            ev.getY() >= realDataCoordinates.get(i)[j][1] - 6 && ev.getY() <= realDataCoordinates.get(i)[j][1] + 6){
+                        label = "X= " + data.get(i)[j][0] + " Y= " + data.get(i)[j][1];
+                        labelX = ev.getX();
+                        labelY = ev.getY();
+                        labelI = i;
+                        labelJ = j;
+                        isLabel = true;
+                        isMoveCoordinate = true;
+                        repaint();
+                        no = false;
+                    }
+                }
+            }
+
+            if (no) {
+                label = "";
+                labelX = ev.getX();
+                labelY = ev.getY();
+                isLabel = true;
+                isMoveCoordinate = false;
+                repaint();
+            }
+
+        }
+
+        public void mouseDragged(MouseEvent ev) {
+            if (isMoveCoordinate) {
+                var a =  translatePointToXY(ev.getX(), ev.getY());
+                data.get(labelI)[labelJ][0] = a[0];
+                data.get(labelI)[labelJ][1] = a[1];
+                repaint();
+            }else {
+                if (!isStartDrag){
+                    rectXStart = ev.getX();
+                    rectYStart = ev.getY();
+                    isStartDrag = true;
+                }
+
+                rectWidth = Math.abs(ev.getX() - rectXStart) ;
+                rectHeight= Math.abs(ev.getY() - rectYStart) ;
+                repaint();
+            }
+        }
+    }
+
+    public class MouseHandler extends MouseAdapter {
+        public MouseHandler() {
+        }
+
+        public void mouseClicked(MouseEvent ev) {
+
+
+        }
+
+        public void mousePressed(MouseEvent ev) {
+
+        }
+
+        public void mouseReleased(MouseEvent ev) {
+            isStartDrag = false;
+            isMoveCoordinate = false;
+
+            rectXStart = 0;
+            rectYStart = 0;
+            rectWidth = 0;
+            rectHeight = 0;
+        }
+    }
 }
+
+

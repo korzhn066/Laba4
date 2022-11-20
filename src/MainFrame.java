@@ -1,11 +1,7 @@
 import java.awt.BorderLayout;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
-import java.io.DataInputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
 import javax.swing.AbstractAction;
 import javax.swing.Action;
 import javax.swing.JCheckBoxMenuItem;
@@ -61,6 +57,31 @@ public class MainFrame extends JFrame {
             }
         };
 
+
+        Action saveToGraphicsAction = new AbstractAction("Сохранить данные для построения графика") {
+            public void actionPerformed(ActionEvent event) {
+                if (fileChooser==null) {
+                    // Если экземпляр диалогового окна
+                    // "Открыть файл" ещѐ не создан,
+                    // то создать его
+                    fileChooser = new JFileChooser();
+                    // и инициализировать текущей директорией
+                    fileChooser.setCurrentDirectory(new File("."));
+                }
+                // Показать диалоговое окно
+                if (fileChooser.showSaveDialog(MainFrame.this) ==
+                        JFileChooser.APPROVE_OPTION);
+                // Если результат его показа успешный,
+                // сохранить данные в двоичный файл
+                saveToGraphicsFile(
+                        fileChooser.getSelectedFile());
+            }
+        };
+
+        fileMenu.add(saveToGraphicsAction);
+
+
+
 // Добавить соответствующий элемент меню
         fileMenu.add(openGraphicsAction);
         // Создать пункт меню "График"
@@ -98,6 +119,8 @@ public class MainFrame extends JFrame {
         };
 
         graphicsMenu.add(rotate);
+
+
 // Элемент по умолчанию включен (отмечен флажком)
         showMarkersMenuItem.setSelected(true);
 // Зарегистрировать обработчик событий, связанных с меню "График"
@@ -150,6 +173,24 @@ Double.SIZE/8 байт;
             JOptionPane.showMessageDialog(MainFrame.this, "Ошибка чтения координат точек из файла", "Ошибка загрузки данных",
                     JOptionPane.WARNING_MESSAGE);
             return;
+        }
+    }
+
+    protected void saveToGraphicsFile(File selectedFile) {
+        try {
+// Создать новый байтовый поток вывода, направленный в указанный файл
+            DataOutputStream out = new DataOutputStream(new
+                    FileOutputStream(selectedFile));
+// Записать в поток вывода попарно значение X в точке, значение многочлена в точке
+            for (int i = 0; i < display.data.get(0).length; i++) {
+                out.writeDouble((Double)display.data.get(0)[i][0]);
+                out.writeDouble((Double)display.data.get(0)[i][1]);
+            }
+// Закрыть поток вывода
+            out.close();
+        } catch (Exception e) {
+// Исключительную ситуацию "ФайлНеНайден" в данном случае можно не обрабатывать,
+// так как мы файл создаѐм, а не открываем для чтения
         }
     }
 
